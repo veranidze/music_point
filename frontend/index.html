@@ -1,0 +1,434 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Music Point - Бронирование</title>
+
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            overflow: hidden; 
+            margin: 0;
+            padding: 0;
+            display: flex;
+            flex-direction: column;
+            height: 100vh;
+            background-color: #1e293b;
+        }
+        #map-container { position: relative; flex-grow: 1; }
+        #map { height: 100%; width: 100%; z-index: 10; }
+        #schedule-modal { transition: opacity 0.3s ease-in-out; }
+        .custom-icon {
+            display: flex; justify-content: center; align-items: center;
+            border-radius: 50%; border: 2px solid white;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.25);
+            background: #2563eb;
+        }
+        .custom-icon svg { color: white; }
+        .user-location-icon {
+            background-color: #3b82f6; border-radius: 50%;
+            border: 3px solid #ffffff; box-shadow: 0 0 0 4px #3b82f6;
+        }
+        .glass-effect {
+            background-color: rgba(30, 41, 59, 0.7);
+            backdrop-filter: blur(24px); -webkit-backdrop-filter: blur(24px);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+        }
+        .day-cell { 
+            transition: background-color 0.2s; 
+            border-right: 1px solid rgba(255, 255, 255, 0.1);
+            border-top: 1px solid rgba(255, 255, 255, 0.1);
+            cursor: pointer;
+        }
+        .day-cell:nth-child(7n) { border-right: none; }
+        .day-cell.today {
+            box-shadow: inset 0 0 0 1px rgba(239, 68, 68, 0.7);
+        }
+        .day-cell.today .day-number { 
+            background-color: #3b82f6; 
+            color: white;
+            border-radius: 50%;
+        }
+        .day-cell:hover { background-color: rgba(255, 255, 255, 0.05); }
+        .other-month .day-number { color: rgba(255, 255, 255, 0.3); }
+        
+        .toast-notification {
+            position: fixed; top: 20px; left: 50%;
+            transform: translateX(-50%);
+            background-color: #ef4444; color: white;
+            padding: 10px 20px; border-radius: 8px; z-index: 10000;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            opacity: 0; transition: opacity 0.3s ease, top 0.3s ease;
+        }
+        .toast-notification.show { opacity: 1; top: 40px; }
+        .loader {
+            border: 4px solid rgba(255, 255, 255, 0.2);
+            border-left-color: #ffffff;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+        }
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+        .bookings-list::-webkit-scrollbar { width: 4px; }
+        .bookings-list::-webkit-scrollbar-track { background: transparent; }
+        .bookings-list::-webkit-scrollbar-thumb { background: rgba(148, 163, 184, 0.4); border-radius: 2px; }
+        #calendar-grid-wrapper::-webkit-scrollbar { width: 4px; }
+        #calendar-grid-wrapper::-webkit-scrollbar-track { background: transparent; }
+        #calendar-grid-wrapper::-webkit-scrollbar-thumb { background: rgba(148, 163, 184, 0.4); border-radius: 2px; }
+
+        .point-tooltip {
+            background-color: rgba(0, 0, 0, 0.7) !important;
+            border: 1px solid rgba(255, 255, 255, 0.2) !important;
+            color: white !important;
+            padding: 4px 8px !important;
+            border-radius: 8px !important;
+            box-shadow: none !important;
+            font-size: 11px !important;
+            font-weight: 600 !important;
+            /* margin-top был убран, чтобы избежать конфликтов с позиционированием Leaflet */
+        }
+    </style>
+</head>
+<body class="bg-slate-800">
+
+    <header class="bg-gradient-to-t from-slate-700 to-slate-900 text-white text-center p-4 shadow-lg z-20">
+        <h1 class="text-xl font-bold">Music Point Batumi</h1>
+        <p class="text-sm text-slate-400">Нажмите на точку, чтобы посмотреть расписание</p>
+    </header>
+
+    <div id="map-container">
+        <div id="map"></div>
+        <div class="absolute bottom-[33%] right-5 z-20 flex flex-col items-center space-y-2">
+            <span class="text-xs font-semibold text-slate-800 bg-white/80 backdrop-blur-sm px-2 py-1 rounded-full shadow-md">Где я?</span>
+            <button id="geolocate-btn" class="bg-white p-3 rounded-full shadow-lg hover:bg-gray-100 active:scale-95 transition-all" title="Найти меня">
+                <svg class="w-6 h-6 text-gray-700" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor">
+                     <path stroke-linecap="round" stroke-linejoin="round" d="M12 21a9 9 0 01-9-9 9 9 0 019-9m9 9a9 9 0 01-9 9m-9-9h18m-9-9v18" />
+                </svg>
+            </button>
+        </div>
+    </div>
+
+    <div id="schedule-modal" class="fixed inset-0 z-50 flex justify-center items-center p-2 sm:p-4 opacity-0 pointer-events-none">
+        <div id="schedule-content" class="glass-effect rounded-3xl shadow-2xl w-full sm:max-w-6xl max-h-[90vh] flex flex-col transform scale-95 transition-transform duration-300">
+            <!-- Вью Календаря (Месяц) -->
+            <div id="calendar-view" class="h-full flex flex-col">
+                 <div class="flex justify-between items-center p-2 border-b border-white/20 flex-shrink-0">
+                    <div class="flex-1 min-w-0">
+                        <h2 id="point-name-title" class="text-base font-semibold text-white pl-2 leading-tight"></h2>
+                    </div>
+                    <div class="flex items-center space-x-1 sm:space-x-2 flex-shrink-0">
+                        <button id="prev-month-btn" class="p-2 rounded-full hover:bg-white/10 transition-colors"><svg class="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7" /></svg></button>
+                        <h3 id="month-year-title" class="text-sm sm:text-base font-bold text-white w-24 sm:w-32 text-center"></h3>
+                        <button id="next-month-btn" class="p-2 rounded-full hover:bg-white/10 transition-colors"><svg class="w-5 h-5 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" /></svg></button>
+                    </div>
+                    <div class="flex-1 flex justify-end">
+                        <button class="close-modal-btn p-2 rounded-full hover:bg-white/10 transition-colors"><svg class="w-6 h-6 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" /></svg></button>
+                    </div>
+                </div>
+                <div id="calendar-weekdays" class="grid grid-cols-7 px-1 sm:px-2 py-1 flex-shrink-0 border-b border-white/10"></div>
+                <div id="calendar-grid-wrapper" class="flex-grow overflow-y-auto min-h-0">
+                    <div id="calendar-grid" class="grid grid-cols-7 gap-0"></div>
+                </div>
+            </div>
+
+            <!-- Вью одного дня (изначально скрыт) -->
+            <div id="day-view" class="hidden h-full flex flex-col">
+                <div class="flex justify-between items-center p-3 sm:p-4 border-b border-white/20 flex-shrink-0">
+                    <button id="back-to-calendar-btn" class="p-2 rounded-full hover:bg-white/10 transition-colors"><svg class="w-6 h-6 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7" /></svg></button>
+                    <h2 id="day-view-title" class="text-lg sm:text-xl font-bold text-white text-center"></h2>
+                    <button class="close-modal-btn p-2 rounded-full hover:bg-white/10 transition-colors"> <svg class="w-6 h-6 text-white" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" /></svg></button>
+                </div>
+                <div id="day-schedule-slots" class="overflow-y-auto p-3 sm:p-4 space-y-2"></div>
+                <div id="booking-buttons" class="p-3 sm:p-4 border-t border-white/20 flex-shrink-0"></div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const musicPoints = [
+            { id: 1, name: "Магнолия", address: "ул. Шерифа Химшиашвили 4", coords: [41.644387, 41.616821], contacts: { telegram: "https://t.me/musicpoint_batumi", whatsapp: "https://api.whatsapp.com/send/?phone=995558661437&text&type=phone_number&app_absent=0", instagram: "https://www.instagram.com/musicpoint_batumi" }, calendarId: 'ef133c541883862573b862447b38a2a2e518d1097d9609f2478dc3cbd2133519@group.calendar.google.com' },
+            { id: 2, name: "Бараташвили 45", address: "ул. Бараташвили 45", coords: [41.647130, 41.639266], contacts: { telegram: "https://t.me/musicpoint_batumi", whatsapp: "https://api.whatsapp.com/send/?phone=995558661437&text&type=phone_number&app_absent=0", instagram: "https://www.instagram.com/musicpoint_batumi" }, calendarId: 'musicpointbatumi@gmail.com' },
+            { id: 3, name: "Oранж нижний зал (барабаны)", address: "ул. Такаишвили 8", coords: [41.64136517546818, 41.62833499637027], contacts: { telegram: "https://t.me/musicpoint_batumi", whatsapp: "https://api.whatsapp.com/send/?phone=995558661437&text&type=phone_number&app_absent=0", instagram: "https://www.instagram.com/musicpoint_batumi" }, calendarId: '6f2a768f07757e6e2895e6bb4383763bbd7b1bfa1e6915e83243615e4443034b@group.calendar.google.com' },
+            { id: 4, name: "Оранж верхний зал (сцена)", address: "ул. Такаишвили 8", coords: [41.64126088576039, 41.62840169197932], contacts: { telegram: "https://t.me/musicpoint_batumi", whatsapp: "https://api.whatsapp.com/send/?phone=995558661437&text&type=phone_number&app_absent=0", instagram: "https://www.instagram.com/musicpoint_batumi" }, calendarId: '83fe942e969bae3b62e1786751202c1a3ecd9b63a1f7ce8539b359478a0b1cad@group.calendar.google.com' },
+            { id: 14, name: "Оранж нижний вокальный", address: "ул. Такаишвили 8", coords: [41.641279928201726, 41.628352071113504], contacts: { telegram: "https://t.me/musicpoint_batumi", whatsapp: "https://api.whatsapp.com/send/?phone=995558661437&text&type=phone_number&app_absent=0", instagram: "https://www.instagram.com/musicpoint_batumi" }, calendarId: 'a64e7791e63684ebd4f847423eabd3f96001bf24cd05edc0e1f6ab3e4483949b@group.calendar.google.com' },
+            { id: 5, name: "Такаишвили 53", address: "ул. Такаишвили 53", coords: [41.641540, 41.628692], contacts: { telegram: "https://t.me/musicpoint_batumi", whatsapp: "https://api.whatsapp.com/send/?phone=995558661437&text&type=phone_number&app_absent=0", instagram: "https://www.instagram.com/musicpoint_batumi" }, calendarId: '7a1f59d2eda2595ef6603042b24fe8be201f6482724716ff24ddef0564eed679@group.calendar.google.com' },
+            { id: 6, name: "Гараж (Горгиладзе 63)", address: "ул. Горгиладзе 63", coords: [41.644533, 41.625926], contacts: { telegram: "https://t.me/musicpoint_batumi", whatsapp: "https://api.whatsapp.com/send/?phone=995558661437&text&type=phone_number&app_absent=0", instagram: "https://www.instagram.com/musicpoint_batumi" }, calendarId: '0dd24d467a8ebbcb41fcd8d0a619df2520aae6e953d15af2bb99e904780062aa@group.calendar.google.com' },
+            { id: 7, name: "Джавахишвили 4 (ближний)", address: "ул. Джавахишвили 4", coords: [41.641327, 41.620955], contacts: { telegram: "https://t.me/musicpoint_batumi", whatsapp: "https://api.whatsapp.com/send/?phone=995558661437&text&type=phone_number&app_absent=0", instagram: "https://www.instagram.com/musicpoint_batumi" }, calendarId: '6a01fb412233bc2a72c00e0c15d6eef0d1511fa525182232595cd778889c1540@group.calendar.google.com' },
+            { id: 8, name: "Джавахишвили 4 (дальний)", address: "ул. Джавахишвили 4", coords: [41.641337, 41.620965], contacts: { telegram: "https://t.me/musicpoint_batumi", whatsapp: "https://api.whatsapp.com/send/?phone=995558661437&text&type=phone_number&app_absent=0", instagram: "https://www.instagram.com/musicpoint_batumi" }, calendarId: '630f9753378b7b1b4ebef5e864ace5a69dc4d46f5b689065c48c62d438fbca7f@group.calendar.google.com' },
+            { id: 9, name: "Виола репточка", address: "ул. Такаишвили 87", coords: [41.638735, 41.630400], contacts: { telegram: "https://t.me/musicpoint_batumi", whatsapp: "https://api.whatsapp.com/send/?phone=995558661437&text&type=phone_number&app_absent=0", instagram: "https://www.instagram.com/musicpoint_batumi" }, calendarId: '68ac2b48a381b21dd922a245a11f3db0306ea0171f4411660d4ba07ef72b3472@group.calendar.google.com' },
+            { id: 10, name: "Виола ближний вокальный класс", address: "ул. Такаишвили 87", coords: [41.638745, 41.630410], contacts: { telegram: "https://t.me/musicpoint_batumi", whatsapp: "https://api.whatsapp.com/send/?phone=995558661437&text&type=phone_number&app_absent=0", instagram: "https://www.instagram.com/musicpoint_batumi" }, calendarId: 'd9a471bdc66dc5e1e4104544c68e9dd7db9032271d35b933d62de5d0b91c2ff4@group.calendar.google.com' },
+            { id: 11, name: "Виола дальний фортепианный класс", address: "ул. Такаишвили 87", coords: [41.638755, 41.630420], contacts: { telegram: "https://t.me/musicpoint_batumi", whatsapp: "https://api.whatsapp.com/send/?phone=995558661437&text&type=phone_number&app_absent=0", instagram: "https://www.instagram.com/musicpoint_batumi" }, calendarId: '3243bb3311f82be600a66e354213f1211107c0d93c5c55fe54aa0ce40e4ddebe@group.calendar.google.com' },
+            { id: 12, name: "Ангиса ближний зал", address: "1-й тупик Ангиса, 4", coords: [41.632402, 41.609973], contacts: { telegram: "https://t.me/musicpoint_batumi", whatsapp: "https://api.whatsapp.com/send/?phone=995558661437&text&type=phone_number&app_absent=0", instagram: "https://www.instagram.com/musicpoint_batumi" }, calendarId: '880d15d06facc18010bedd5ab67378b405f3dfce158fca3654ac0d9e1d6bdc68@group.calendar.google.com' },
+            { id: 13, name: "Ангиса дальний зал", address: "1-й тупик Ангиса, 4", coords: [41.632358, 41.609923], contacts: { telegram: "https://t.me/musicpoint_batumi", whatsapp: "https://api.whatsapp.com/send/?phone=995558661437&text&type=phone_number&app_absent=0", instagram: "https://www.instagram.com/musicpoint_batumi" }, calendarId: '3473102fb35e99f9d58168787b3289c773b527a26e5c6b983203fb0567f088c5@group.calendar.google.com' }
+        ];
+
+        let currentPoint = null;
+        let currentDate = new Date();
+        let monthBookings = {};
+
+        const map = L.map('map').setView([41.642, 41.625], 14); 
+        L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', { attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors &copy; <a href="https://carto.com/attributions">CARTO</a>', subdomains: 'abcd', maxZoom: 20 }).addTo(map);
+        
+        const modal = document.getElementById('schedule-modal');
+        let userMarker = null;
+
+        const calendarView = document.getElementById('calendar-view');
+        const dayView = document.getElementById('day-view');
+        const pointNameTitle = document.getElementById('point-name-title');
+        const monthYearTitle = document.getElementById('month-year-title');
+        const calendarWeekdays = document.getElementById('calendar-weekdays');
+        const prevMonthBtn = document.getElementById('prev-month-btn');
+        const nextMonthBtn = document.getElementById('next-month-btn');
+        const backToCalendarBtn = document.getElementById('back-to-calendar-btn');
+        const dayViewTitle = document.getElementById('day-view-title');
+        const dayScheduleSlots = document.getElementById('day-schedule-slots');
+        const bookingButtonsContainer = document.getElementById('booking-buttons');
+        const closeModalBtns = document.querySelectorAll('.close-modal-btn');
+        const geolocateBtn = document.getElementById('geolocate-btn');
+
+        function showToast(message) { /* ... no changes ... */ }
+        
+        async function fetchCalendarData(year, month) {
+            const gridWrapper = document.getElementById('calendar-grid-wrapper');
+            gridWrapper.innerHTML = '<div class="flex justify-center items-center h-full"><div class="loader"></div></div>';
+            
+            const backendUrl = `/api/events?calendar_id=${encodeURIComponent(currentPoint.calendarId)}&year=${year}&month=${month + 1}`;
+
+            try {
+                const response = await fetch(backendUrl);
+                if (!response.ok) {
+                    const errorData = await response.json().catch(() => ({ detail: response.statusText }));
+                    throw new Error(errorData.detail || `Ошибка сервера: ${response.status}`);
+                }
+                const data = await response.json();
+                
+                const bookings = {};
+                (data.items || []).forEach(event => {
+                    if (!event.start.dateTime) return;
+                    
+                    const startDateObj = new Date(event.start.dateTime);
+                    const endDateObj = new Date(event.end.dateTime);
+                    const dateStr = `${startDateObj.getFullYear()}-${String(startDateObj.getMonth() + 1).padStart(2, '0')}-${String(startDateObj.getDate()).padStart(2, '0')}`;
+                    
+                    if (!bookings[dateStr]) bookings[dateStr] = [];
+                    
+                    bookings[dateStr].push({
+                        startTime: startDateObj.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }),
+                        endTime: endDateObj.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit' }),
+                        occupant: event.summary
+                    });
+                });
+                renderCalendar(year, month, bookings);
+
+            } catch (error) {
+                console.error('Failed to fetch calendar data:', error);
+                showToast(`Ошибка: ${error.message}`);
+                renderCalendar(year, month, {});
+            }
+        }
+
+        function renderCalendar(year, month, bookings) {
+            monthBookings = bookings;
+            const gridWrapper = document.getElementById('calendar-grid-wrapper');
+            gridWrapper.innerHTML = '';
+            const grid = document.createElement('div');
+            grid.id = 'calendar-grid';
+            grid.className = 'grid grid-cols-7 grid-rows-6 gap-0 min-h-full';
+            gridWrapper.appendChild(grid);
+            
+            calendarWeekdays.innerHTML = '';
+            
+            monthYearTitle.textContent = new Date(year, month).toLocaleDateString('ru-RU', { month: 'long', year: 'numeric' });
+            
+            const weekdays = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс'];
+            weekdays.forEach(day => {
+                calendarWeekdays.innerHTML += `<div class="text-center text-xs font-bold text-slate-400 p-1">${day}</div>`;
+            });
+
+            const firstDayOfMonth = new Date(year, month, 1);
+            const daysInMonth = new Date(year, month + 1, 0).getDate();
+            const startDay = (firstDayOfMonth.getDay() === 0) ? 6 : firstDayOfMonth.getDay() - 1;
+
+            for (let i = 0; i < startDay; i++) { grid.innerHTML += '<div></div>'; }
+
+            for (let day = 1; day <= daysInMonth; day++) {
+                const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+                
+                const dayCell = document.createElement('div');
+                dayCell.className = 'day-cell flex flex-col p-1 text-white overflow-hidden min-h-[80px] sm:min-h-[90px]';
+                const today = new Date();
+                const isToday = day === today.getDate() && month === today.getMonth() && year === today.getFullYear();
+                
+                if(isToday) dayCell.classList.add('today');
+
+                const dayHeader = document.createElement('div');
+                dayHeader.className = 'flex justify-end';
+                const dayNumber = document.createElement('span');
+                dayNumber.className = 'day-number text-xs w-5 h-5 flex items-center justify-center';
+                dayNumber.textContent = day;
+                dayHeader.appendChild(dayNumber);
+                dayCell.appendChild(dayHeader);
+
+                const bookingsForDay = monthBookings[dateStr];
+                if (bookingsForDay && bookingsForDay.length > 0) {
+                    const bookingsContainer = document.createElement('div');
+                    bookingsContainer.className = 'bookings-list flex-grow overflow-hidden space-y-0.5 mt-1 min-h-0';
+                    
+                    const maxVisibleEvents = 2; 
+                    bookingsForDay.slice(0, maxVisibleEvents).forEach(booking => {
+                        const bookingEl = document.createElement('div');
+                        bookingEl.className = 'text-[10px] leading-tight truncate bg-sky-500/40 text-sky-100 rounded-sm px-1';
+                        bookingEl.textContent = `${booking.startTime} ${booking.occupant}`;
+                        bookingsContainer.appendChild(bookingEl);
+                    });
+
+                    if (bookingsForDay.length > maxVisibleEvents) {
+                        const remainingCount = bookingsForDay.length - maxVisibleEvents;
+                        const moreEl = document.createElement('div');
+                        moreEl.className = 'text-[10px] leading-tight text-slate-400 px-1 mt-0.5';
+                        moreEl.textContent = `+${remainingCount} ещё...`;
+                        bookingsContainer.appendChild(moreEl);
+                    }
+
+                    dayCell.appendChild(bookingsContainer);
+                }
+
+                dayCell.addEventListener('click', () => showDayView(new Date(dateStr + "T00:00:00")));
+                grid.appendChild(dayCell);
+            }
+        }
+        
+        function showDayView(date) {
+            calendarView.style.display = 'none';
+            dayView.style.display = 'flex';
+
+            dayViewTitle.textContent = date.toLocaleDateString('ru-RU', { day: 'numeric', month: 'long', weekday: 'long' });
+            dayScheduleSlots.innerHTML = '';
+            
+            const dateStr = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+            const bookingsForDay = monthBookings[dateStr] || [];
+
+            if (bookingsForDay.length === 0) {
+                dayScheduleSlots.innerHTML = '<div class="text-slate-400 text-center p-8">На этот день нет записей</div>';
+            } else {
+                bookingsForDay.forEach(booking => {
+                    const slotDiv = document.createElement('div');
+                    slotDiv.className = 'p-2.5 rounded-md text-sm border flex items-center bg-red-500/30 text-red-300/80 border-red-500/40';
+                    const timeText = `${booking.startTime} - ${booking.endTime}`;
+                    slotDiv.innerHTML = `<span class="font-bold w-28 flex-shrink-0">${timeText}</span> <span>${booking.occupant}</span>`;
+                    dayScheduleSlots.appendChild(slotDiv);
+                });
+            }
+
+            renderBookingButtons();
+        }
+
+        function showCalendarView() {
+            dayView.style.display = 'none';
+            calendarView.style.display = 'flex';
+        }
+
+        function renderBookingButtons() {
+            bookingButtonsContainer.innerHTML = '';
+            const bookingLabel = document.createElement('h4');
+            bookingLabel.textContent = 'Забронировать через:';
+            bookingLabel.className = 'text-xs sm:text-sm font-semibold text-slate-300 mb-2';
+            bookingButtonsContainer.appendChild(bookingLabel);
+            
+            const buttonWrapper = document.createElement('div');
+            buttonWrapper.className = 'flex flex-col sm:flex-row gap-2';
+            
+            const buttons = [
+                { text: 'Telegram', href: currentPoint.contacts.telegram, icon: `<svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M9.78 18.65l.28-4.23l7.68-6.92c.34-.31-.07-.46-.52-.19L7.74 13.3L3.64 12c-.88-.25-.89-.86.2-1.3l15.97-6.16c.73-.33 1.43.18 1.15 1.3l-2.72 12.57c-.28 1.13-1.04 1.4-1.74 .88l-4.98-3.65l-2.45 2.35c-.27.27-.5.4-.86.4z"/></svg>`, style: 'bg-sky-500 hover:bg-sky-600' },
+                { text: 'WhatsApp', href: currentPoint.contacts.whatsapp, icon: `<svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M19.11 4.91C17.22 3 14.66 1.95 12 1.95c-5.46 0-9.91 4.45-9.91 9.91 0 1.75.46 3.5 1.32 5l-1.44 5.25L7.17 21c1.44.8 3.12 1.25 4.83 1.25 5.46 0 9.91-4.45 9.91-9.91 0-2.66-1.05-5.22-2.94-7.11zm-7.11 15.12c-1.49 0-2.97-.4-4.29-1.15l-.3-.18-3.18.84.86-3.1-.2-.31c-.82-1.38-1.25-2.94-1.25-4.51 0-4.38 3.56-7.94 7.94-7.94s7.94 3.56 7.94 7.94-3.56 7.94-7.94 7.94zm4.28-5.45c-.23-.12-1.35-.67-1.56-.74s-.36-.12-.51.12-.59.74-.72.89-.26.18-.48.06c-.23-.12-.95-.35-1.81-1.12-.67-.59-1.12-1.33-1.25-1.56s-.1-.36.06-.48c.11-.11.23-.29.35-.44s.16-.23.23-.38.03-.29-.03-.41c-.06-.12-.51-1.23-.7-1.68s-.36-.38-.51-.38-.29-.01-.44-.01h-.08c-.15 0-.39.06-.59.29s-.8 1.09-.8 2.64.82 3.06.94 3.28 1.59 2.44 3.86 3.43c.54.23.97.37 1.3.48.56.18 1.07.15 1.46.09.44-.06 1.35-.55 1.54-1.08s.19-1-.03-1.12z"/></svg>`, style: 'bg-green-500 hover:bg-green-600' },
+                { text: 'Instagram', href: currentPoint.contacts.instagram, icon: `<svg class="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M7.8,2H16.2C19.4,2 22,4.6 22,7.8V16.2A5.8,5.8 0 0,1 16.2,22H7.8C4.6,22 2,19.4 2,16.2V7.8A5.8,5.8 0 0,1 7.8,2M7.6,4A3.6,3.6 0 0,0 4,7.6V16.4C4,18.39 5.61,20 7.6,20H16.4A3.6,3.6 0 0,0 20,16.4V7.6C20,5.61 18.39,4 16.4,4H7.6M17.25,5.5A1.25,1.25 0 0,1 18.5,6.75A1.25,1.25 0 0,1 17.25,8A1.25,1.25 0 0,1 16,6.75A1.25,1.25 0 0,1 17.25,5.5M12,7A5,5 0 0,1 17,12A5,5 0 0,1 12,17A5,5 0 0,1 7,12A5,5 0 0,1 12,7M12,9A3,3 0 0,0 9,12A3,3 0 0,0 12,15A3,3 0 0,0 15,12A3,3 0 0,0 12,9Z"/></svg>`, style: 'bg-gradient-to-r from-purple-500 via-pink-500 to-orange-500 hover:opacity-90' }
+            ];
+             buttons.forEach(btnInfo => {
+                const button = document.createElement('a');
+                button.href = btnInfo.href; button.target = '_blank'; button.rel = 'noopener noreferrer';
+                button.className = `w-full sm:w-auto flex-grow text-center p-2 rounded-lg font-semibold transition-all flex items-center justify-center space-x-2 text-white text-sm ${btnInfo.style}`;
+                button.innerHTML = `${btnInfo.icon}<span>${btnInfo.text}</span>`;
+                buttonWrapper.appendChild(button);
+            });
+            bookingButtonsContainer.appendChild(buttonWrapper);
+        }
+
+        async function openModal(point) {
+            currentPoint = point;
+            currentDate = new Date();
+            pointNameTitle.textContent = point.name;
+            await fetchCalendarData(currentDate.getFullYear(), currentDate.getMonth());
+            showCalendarView();
+            modal.classList.remove('opacity-0', 'pointer-events-none');
+            document.getElementById('schedule-content').classList.remove('scale-95');
+        }
+
+        function closeModal() {
+            modal.classList.add('opacity-0', 'pointer-events-none');
+            document.getElementById('schedule-content').classList.add('scale-95');
+        }
+
+        musicPoints.forEach(point => {
+            const customIcon = L.divIcon({ 
+                className: 'custom-icon', 
+                html: '<svg class="h-4 w-4 text-white" fill="currentColor" viewBox="0 0 20 20"><path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.07 3.292a1 1 0 00.95.69h3.462c.969 0 1.371 1.24.588 1.81l-2.8 2.034a1 1 0 00-.364 1.118l1.07 3.292c.3.921-.755 1.688-1.54 1.118l-2.8-2.034a1 1 0 00-1.175 0l-2.8 2.034c-.784.57-1.838-.197-1.539-1.118l1.07-3.292a1 1 0 00-.364-1.118L2.98 8.72c-.783-.57-.38-1.81.588-1.81h3.461a1 1 0 00.951-.69l1.07-3.292z" /></svg>',
+                iconSize: [24, 24], 
+            });
+            
+            const marker = L.marker(point.coords, { icon: customIcon }).addTo(map);
+
+            marker.bindTooltip(point.name, {
+                permanent: true,
+                direction: 'top',
+                offset: [0, -15],
+                className: 'point-tooltip'
+            });
+
+            marker.on('click', () => { setTimeout(() => openModal(point), 300); });
+        });
+
+        geolocateBtn.addEventListener('click', () => {
+            if (navigator.geolocation) {
+                navigator.geolocation.getCurrentPosition(
+                    (position) => {
+                        const { latitude, longitude } = position.coords;
+                        const userCoords = [latitude, longitude];
+                        const userIcon = L.divIcon({ className: 'user-location-icon', iconSize: [20, 20] });
+                        if (userMarker) { userMarker.setLatLng(userCoords); } 
+                        else { userMarker = L.marker(userCoords, { icon: userIcon }).addTo(map); }
+                        map.setView(userCoords, 15);
+                        userMarker.bindPopup('Вы здесь').openPopup();
+                    },
+                    (error) => {
+                        console.error("Ошибка геолокации:", error);
+                        showToast("Не удалось определить вашу геопозицию.");
+                    }
+                );
+            } else {
+                showToast("Геолокация не поддерживается этим браузером.");
+            }
+        });
+
+        closeModalBtns.forEach(btn => btn.addEventListener('click', closeModal));
+        
+        prevMonthBtn.addEventListener('click', async () => { 
+            currentDate.setMonth(currentDate.getMonth() - 1); 
+            await fetchCalendarData(currentDate.getFullYear(), currentDate.getMonth());
+        });
+        nextMonthBtn.addEventListener('click', async () => { 
+            currentDate.setMonth(currentDate.getMonth() + 1); 
+            await fetchCalendarData(currentDate.getFullYear(), currentDate.getMonth());
+        });
+        backToCalendarBtn.addEventListener('click', showCalendarView);
+        document.addEventListener('keydown', (event) => { if (event.key === 'Escape') { closeModal(); } });
+    </script>
+</body>
+</html>
